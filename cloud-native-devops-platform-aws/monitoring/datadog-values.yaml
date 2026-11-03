@@ -1,0 +1,27 @@
+# Helm values for the Datadog Agent on EKS.
+# Install with: scripts/bootstrap-cluster.sh  (needs DD_API_KEY env var)
+datadog:
+  site: datadoghq.com            # change to datadoghq.eu / us5.datadoghq.com etc. if needed
+  apiKeyExistingSecret: datadog-secret   # API key is stored in a K8s Secret, never in Git
+  clusterName: devops-platform-dev-eks
+
+  # Collect container logs from all pods
+  logs:
+    enabled: true
+    containerCollectAll: true
+
+  # Application Performance Monitoring (traces)
+  apm:
+    portEnabled: true
+
+  # Live process + container views
+  processAgent:
+    enabled: true
+    processCollection: true
+
+  # Kubernetes object metrics (deployments, pods, restarts...)
+  kubeStateMetricsCore:
+    enabled: true
+
+clusterAgent:
+  enabled: true

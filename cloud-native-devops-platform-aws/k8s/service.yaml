@@ -1,0 +1,14 @@
+# Exposes the app to the internet through an AWS Load Balancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-app
+  namespace: devops-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: devops-app
+  ports:
+    - port: 80
+      targetPort: 5000
+      protocol: TCP

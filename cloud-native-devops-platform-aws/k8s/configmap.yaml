@@ -1,0 +1,8 @@
+# Non-secret configuration, injected into the pods as environment variables
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: devops-app
+data:
+  APP_ENV: "dev"

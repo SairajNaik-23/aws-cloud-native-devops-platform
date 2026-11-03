@@ -1,0 +1,112 @@
+// CI/CD pipeline: GitHub -> Test -> Docker build -> Push to ECR -> Deploy to EKS
+//
+// Jenkins server requirements (see README "Jenkins setup"):
+//   - Runs on EC2 with an IAM role that allows ECR push + EKS describe
+//   - Tools installed: docker, aws cli v2, kubectl, python3
+//   - GitHub webhook pointing to http://<jenkins>:8080/github-webhook/
+
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION   = 'ap-south-1'
+        CLUSTER_NAME = 'devops-platform-dev-eks'
+        ECR_REPO     = 'devops-platform-app'
+        // Unique, traceable tag: build number + short git commit
+        IMAGE_TAG    = "${env.BUILD_NUMBER}-${env.GIT_COMMIT ? env.GIT_COMMIT.take(7) : 'local'}"
+    }
+
+    triggers {
+        githubPush()   // build automatically on every push (via webhook)
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m venv venv
+                        . venv/bin/activate
+                        pip install -q -r requirements.txt
+                        pytest -v
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    env.ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
+                    env.ECR_URL    = "${env.ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+                }
+                sh 'docker build -t ${ECR_URL}:${IMAGE_TAG} -t ${ECR_URL}:latest app/'
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                sh '''
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                      | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    docker push ${ECR_URL}:${IMAGE_TAG}
+                    docker push ${ECR_URL}:latest
+                '''
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                sh '''
+                    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/configmap.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl apply -f k8s/hpa.yaml
+
+                    # Put the new image tag into the deployment and apply it
+                    sed -e "s|IMAGE_PLACEHOLDER|${ECR_URL}:${IMAGE_TAG}|" \
+                        -e "s|VERSION_PLACEHOLDER|${IMAGE_TAG}|" \
+                        k8s/deployment.yaml | kubectl apply -f -
+                '''
+            }
+        }
+
+        stage('Verify Rollout') {
+            steps {
+                // If the new pods aren't healthy within 3 minutes, roll back
+                // to the previous version and fail the build.
+                sh '''
+                    if ! kubectl rollout status deployment/devops-app -n devops-app --timeout=180s; then
+                        echo "Rollout failed - rolling back to previous version"
+                        kubectl rollout undo deployment/devops-app -n devops-app
+                        exit 1
+                    fi
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployed ${ECR_REPO}:${IMAGE_TAG} to ${CLUSTER_NAME}"
+        }
+        always {
+            // Free disk space on the Jenkins server
+            sh 'docker image prune -f || true'
+        }
+    }
+}

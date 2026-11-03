@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and edit as needed
+aws_region          = "ap-south-1"
+project_name        = "devops-platform"
+environment         = "dev"
+node_instance_types = ["t3.medium"]
+node_desired_size   = 2
