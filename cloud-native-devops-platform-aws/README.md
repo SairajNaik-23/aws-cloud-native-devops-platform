@@ -6,7 +6,7 @@ An end-to-end DevOps platform on AWS: the infrastructure is created with **Terra
 
 ---
 
-## Architecture
+## Architecture 
  
 ```mermaid
 flowchart LR
